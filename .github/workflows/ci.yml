@@ -70,23 +70,23 @@ jobs:
 
           sleep 1
           code=$(docker compose logs backend | EMAIL="$email" python3 -c '
-import json, os, sys
-target = os.environ["EMAIL"]
-last = None
-for line in sys.stdin:
-    idx = line.find("{")
-    if idx == -1:
-        continue
-    try:
-        obj = json.loads(line[idx:])
-    except ValueError:
-        continue
-    if obj.get("to") == target and "code" in obj:
-        last = obj["code"]
-if last is None:
-    sys.exit("no OTP found for " + target)
-print(last)
-')
+          import json, os, sys
+          target = os.environ["EMAIL"]
+          last = None
+          for line in sys.stdin:
+              idx = line.find("{")
+              if idx == -1:
+                  continue
+              try:
+                  obj = json.loads(line[idx:])
+              except ValueError:
+                  continue
+              if obj.get("to") == target and "code" in obj:
+                  last = obj["code"]
+          if last is None:
+              sys.exit("no OTP found for " + target)
+          print(last)
+          ')
           echo "extracted OTP: $code"
 
           verify=$(curl -sf -X POST http://localhost:4000/api/auth/register/verify-otp \
