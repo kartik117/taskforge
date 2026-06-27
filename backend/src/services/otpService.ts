@@ -37,14 +37,17 @@ export async function verifyOtp(
     await token.deleteOne();
     throw AppError.unauthorized('Verification code expired -- request a new one');
   }
-  if (token.attempts >= MAX_ATTEMPTS) {
-    await token.deleteOne();
-    throw AppError.unauthorized('Too many incorrect attempts -- request a new one');
-  }
-
   const matches = await compareOtpCode(code, token.codeHash);
   if (!matches) {
+    // Increment first, then check the cap against the post-increment count.
+    // Checking attempts >= MAX_ATTEMPTS *before* incrementing let a 6th
+    // guess slip through: attempts only reached 5 after this call's own
+    // increment, so the cap never tripped on the call that caused it.
     token.attempts += 1;
+    if (token.attempts >= MAX_ATTEMPTS) {
+      await token.deleteOne();
+      throw AppError.unauthorized('Too many incorrect attempts -- request a new one');
+    }
     await token.save();
     throw AppError.unauthorized('Incorrect verification code');
   }

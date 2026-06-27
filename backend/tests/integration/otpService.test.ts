@@ -49,6 +49,26 @@ describe('otpService (direct, no HTTP layer)', () => {
     expect(token?.attempts).toBe(1);
   });
 
+  it('locks out after exactly 5 wrong attempts, not 6', async () => {
+    const user = await makeUser('direct4b@example.com');
+    const otpPromise = waitForOtp('direct4b@example.com');
+    await issueOtp(user._id, user.email, 'register');
+    const realCode = await otpPromise;
+    const wrongCode = realCode === '000000' ? '111111' : '000000';
+
+    for (let i = 0; i < 4; i += 1) {
+      await expect(verifyOtp(user._id, 'register', wrongCode)).rejects.toThrow(/Incorrect verification code/);
+    }
+    expect((await OtpToken.findOne({ userId: user._id }))?.attempts).toBe(4);
+
+    // The 5th wrong attempt itself must trip the cap and delete the token --
+    // not let one more guess through first.
+    await expect(verifyOtp(user._id, 'register', wrongCode)).rejects.toThrow(/Too many incorrect attempts/);
+    expect(await OtpToken.countDocuments({ userId: user._id })).toBe(0);
+
+    await expect(verifyOtp(user._id, 'register', realCode)).rejects.toThrow(/No active verification code/);
+  });
+
   it('replaces a previous unused OTP when a new one is issued for the same purpose', async () => {
     const user = await makeUser('direct5@example.com');
     await issueOtp(user._id, user.email, 'register');
