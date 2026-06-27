@@ -10,7 +10,7 @@ A project & task management API and React board, built around a two-step OTP log
 
 | Layer | Choice | Why |
 |---|---|---|
-| API | Node.js + Express + TypeScript | The resume bullet for this project calls for Node/Sequelize/MySQL -- that combination is already the [`webapp`](https://github.com/kartik117/webapp) repo (EduAssign Manager). This one leans into MongoDB/Mongoose instead, for real stack variety across the batch rather than two near-identical Node+SQL repos. |
+| API | Node.js + Express + TypeScript | This project calls for Node/Sequelize/MySQL -- that combination is already the [`webapp`](https://github.com/kartik117/webapp) repo (EduAssign Manager). This one leans into MongoDB/Mongoose instead, for real stack variety across the batch rather than two near-identical Node+SQL repos. |
 | Auth | JWT + 2-step OTP | Password login only gets you an OTP; a token is issued from `/verify-otp`, not `/login`. Same flow, parameterized by `purpose`, covers both registration and login. |
 | DB | MongoDB + Mongoose | Document model fits projects-with-embedded-member-lists naturally; a Mongo TTL index expires spent OTP tokens without a cron job. |
 | Frontend | React + TypeScript + Vite | Small SPA: auth pages, OTP entry, project list, kanban board. No Redux/state library -- the app is small enough that `useState` + one `AuthContext` covers it. |
