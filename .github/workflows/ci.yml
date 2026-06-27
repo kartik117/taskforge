@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # mongodb-memory-server downloads a real mongod binary on first run and
+      # talks to it for real -- no Mongoose mocking, so these tests exercise
+      # the actual TTL index, unique email constraint, and ObjectId casting.
+      - run: npm run lint
+      - run: npm run build
+      - run: npm test -- --coverage
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  integration:
+    runs-on: ubuntu-latest
+    needs: [backend-test, frontend-build]
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose up -d --build
+
+      - name: Wait for backend health
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:4000/health && exit 0
+            sleep 2
+          done
+          echo "backend never became healthy" >&2
+          exit 1
+
+      - name: Register, read the OTP from logs, verify, and create a project + task
+        run: |
+          set -e
+          email="ci-$(date +%s)@example.com"
+
+          register=$(curl -sf -X POST http://localhost:4000/api/auth/register \
+            -H "Content-Type: application/json" \
+            -d "{\"name\":\"CI Bot\",\"email\":\"$email\",\"password\":\"correct-horse-battery-staple\"}")
+          user_id=$(echo "$register" | python3 -c "import sys,json; print(json.load(sys.stdin)['userId'])")
+
+          sleep 1
+          code=$(docker compose logs backend | EMAIL="$email" python3 -c '
+import json, os, sys
+target = os.environ["EMAIL"]
+last = None
+for line in sys.stdin:
+    idx = line.find("{")
+    if idx == -1:
+        continue
+    try:
+        obj = json.loads(line[idx:])
+    except ValueError:
+        continue
+    if obj.get("to") == target and "code" in obj:
+        last = obj["code"]
+if last is None:
+    sys.exit("no OTP found for " + target)
+print(last)
+')
+          echo "extracted OTP: $code"
+
+          verify=$(curl -sf -X POST http://localhost:4000/api/auth/register/verify-otp \
+            -H "Content-Type: application/json" \
+            -d "{\"userId\":\"$user_id\",\"code\":\"$code\"}")
+          token=$(echo "$verify" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+
+          project=$(curl -sf -X POST http://localhost:4000/api/projects \
+            -H "Content-Type: application/json" -H "Authorization: Bearer $token" \
+            -d '{"name":"CI Smoke Project"}')
+          project_id=$(echo "$project" | python3 -c "import sys,json; print(json.load(sys.stdin)['_id'])")
+
+          task=$(curl -sf -X POST "http://localhost:4000/api/projects/$project_id/tasks" \
+            -H "Content-Type: application/json" -H "Authorization: Bearer $token" \
+            -d '{"title":"Verify the stack works end-to-end"}')
+          echo "$task" | python3 -m json.tool
+
+          status=$(echo "$task" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
+          [ "$status" = "todo" ] || { echo "expected a fresh task to start as todo" >&2; exit 1; }
+
+      - name: Frontend is reachable
+        run: curl -sf -o /dev/null http://localhost:3000/
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker compose logs
